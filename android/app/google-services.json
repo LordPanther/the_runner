@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "1093206680054",
+    "project_id": "blackworks-the-runner",
+    "storage_bucket": "blackworks-the-runner.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:1093206680054:android:dff230893c9451fc7c67d7",
+        "android_client_info": {
+          "package_name": "za.co.blackworks.the_runner"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyCXxMkTbICpuwcbayG9b-VbcwuE-Hlj-1Y"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

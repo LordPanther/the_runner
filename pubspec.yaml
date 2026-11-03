@@ -1,0 +1,75 @@
+name: the_runner
+description: "Errand-running marketplace for South Africa: post an errand, runners bid, payment held in escrow until it's done."
+
+publish_to: none
+
+version: 1.0.0+1
+
+environment:
+  sdk: ^3.11.5
+
+dependencies:
+  flutter:
+    sdk: flutter
+  flutter_localizations:
+    sdk: flutter
+
+  # ── Core / UI ──────────────────────────────────────────────
+  cupertino_icons: ^1.0.8
+  google_fonts: ^8.2.0
+
+  # ── State management ──────────────────────────────────────
+  flutter_bloc: ^9.1.1
+  equatable: ^2.0.8
+
+  # ── Firebase (backend) ────────────────────────────────────
+  firebase_core: ^4.7.0
+  cloud_firestore: ^6.3.0
+  firebase_auth: ^6.4.0
+  firebase_storage: ^13.3.0
+  firebase_messaging: ^16.2.0
+
+  # ── Local persistence ──────────────────────────────────────
+  shared_preferences: ^2.5.5
+  path_provider: ^2.1.5
+
+  # ── Location, maps & geocoding ─────────────────────────────
+  geolocator: ^14.0.2
+  geocoding: ^4.0.0
+  flutter_map: ^8.1.1          # MapTiler tiles - no Google billing account needed
+  latlong2: ^0.9.1             # LatLng type flutter_map depends on
+  url_launcher: ^6.3.1         # TradeSafe checkout, directions, support email
+
+  # ── Media (photos & documents) ──────────────────────────────
+  image_picker: ^1.2.2
+  flutter_image_compress: ^2.4.0
+  cached_network_image: ^3.4.1 # avoid re-downloading proof photos and avatars on scroll
+
+  # ── Device permissions & connectivity ───────────────────────
+  permission_handler: ^11.3.1  # camera/gallery access beyond what geolocator covers
+  connectivity_plus: ^6.1.3    # detect offline state on patchy mobile data
+
+  # ── Notifications ────────────────────────────────────────────
+  flutter_local_notifications: ^18.0.1
+
+  # ── Formatting / i18n ─────────────────────────────────────────
+  intl: any                    # let flutter_localizations pin the compatible version - see note below
+
+  # ── Misc utilities ─────────────────────────────────────────────
+  path: ^1.9.1
+  uuid: ^4.5.3
+  cloud_functions: ^6.5.0
+  firebase_app_check: ^0.4.8
+  firebase_crashlytics: ^5.4.0
+  bloc_concurrency: ^0.3.0
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^6.0.0
+
+flutter:
+  uses-material-design: true
+
+  assets:
+    - assets/locale/

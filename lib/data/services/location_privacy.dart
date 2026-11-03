@@ -1,0 +1,1 @@
+double approximateCoordinate(double value) => (value * 100).round() / 100;

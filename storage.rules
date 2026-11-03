@@ -1,0 +1,49 @@
+// storage.rules - ownership verified against Firestore directly
+rules_version = '2';
+service firebase.storage {
+  match /b/{bucket}/o {
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    // Same definition of admin as firestore.rules.
+    function isAdmin() {
+      return isSignedIn() &&
+             firestore.exists(/databases/(default)/documents/admins/$(request.auth.uid));
+    }
+
+    // Every upload must be a real image and stay under a size cap, so
+    // nobody can use the bucket as free hosting at The Runner's cost.
+    function isImageUnder(megabytes) {
+      return request.resource.size < megabytes * 1024 * 1024 &&
+             request.resource.contentType.matches('image/(jpeg|png|webp|heic|heif)');
+    }
+
+    function errand(errandId) {
+      return firestore.get(/databases/(default)/documents/errands/$(errandId)).data;
+    }
+
+    // PROFILE PHOTOS - anyone signed in can see one; only you can set yours.
+    match /users/{userUid}/avatar/{fileName} {
+      allow get: if isSignedIn();
+      allow create, update: if isSignedIn() && request.auth.uid == userUid && isImageUnder(2);
+      allow delete: if isSignedIn() && request.auth.uid == userUid;
+    }
+
+    // PROOF PHOTOS AND TILL SLIPS - uploaded by the runner while the
+    // errand is in progress; seen only by the two people on the errand
+    // (and admins, for disputes).
+    match /errands/{errandId}/proof/{fileName} {
+      allow get: if isSignedIn() && (
+        errand(errandId).requester_uid == request.auth.uid ||
+        errand(errandId).get('runner_uid', null) == request.auth.uid ||
+        isAdmin());
+      allow create: if isSignedIn() &&
+        errand(errandId).get('runner_uid', null) == request.auth.uid &&
+        errand(errandId).status == 'in_progress' &&
+        isImageUnder(5);
+      allow update, delete: if false;
+    }
+  }
+}

@@ -1,0 +1,70 @@
+name: Flutter CI
+
+# Runs on every push and pull request targeting main - catches compile
+# errors and static analysis issues automatically, before they reach a
+# physical device test. The Cloud Functions are built, linted and their
+# money maths tested in a second job.
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  analyze:
+    name: Analyze & Test
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: 'stable'
+          # Pin this to whatever `flutter --version` shows on your
+          # machine once you confirm it, so CI always matches your local
+          # dev environment rather than silently drifting to whatever
+          # "stable" resolves to on a given day.
+          # flutter-version: '3.x.x'
+
+      - name: Install dependencies
+        run: flutter pub get
+
+      - name: Verify formatting
+        run: dart format --output=none --set-exit-if-changed .
+        continue-on-error: true
+        # Starts as a warning, not a hard failure - flip
+        # continue-on-error to false once the codebase is fully
+        # formatted, so new pushes can't drift back out of style.
+
+      - name: Analyze
+        run: flutter analyze
+
+      - name: Run tests
+        run: flutter test
+
+  functions:
+    name: Cloud Functions
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: functions
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Install dependencies
+        run: npm install --no-audit --no-fund
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Build and test fee maths
+        run: npm test

@@ -1,0 +1,248 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // THE GOLDEN RULE: the app may create an errand and place its own
+    // bid. Every change after that (accepting a bid, funding, starting,
+    // proof, release, dispute, cancel) moves money or decides who gets
+    // it, so it happens ONLY in Cloud Functions, which bypass these
+    // rules. Errand updates from clients are blocked outright.
+    //
+    // ADDRESS PRIVACY: rules can only allow or deny whole documents, so
+    // exact addresses live in errands/{id}/private/details with stricter
+    // rules than the errand itself, which only carries a ~1km location.
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isOwner(field) {
+      return isSignedIn() && request.auth.uid == resource.data[field];
+    }
+
+    // An admin is anyone with a document at admins/{uid}. No client can
+    // write that collection - admins are added in the Firebase Console.
+    function isAdmin() {
+      return isSignedIn() &&
+             exists(/databases/$(database)/documents/admins/$(request.auth.uid));
+    }
+
+    function unchanged(fields) {
+      return !request.resource.data.diff(resource.data).affectedKeys().hasAny(fields);
+    }
+
+    function errand(errandId) {
+      return get(/databases/$(database)/documents/errands/$(errandId)).data;
+    }
+
+    function isRequesterOf(errandId) {
+      return isSignedIn() && errand(errandId).requester_uid == request.auth.uid;
+    }
+
+    // The accepted runner, once the requester has actually paid. Before
+    // payment the runner hasn't committed to anything, so they don't
+    // get the address yet.
+    function isFundedRunnerOf(errandId) {
+      let e = errand(errandId);
+      return isSignedIn() &&
+             e.get('runner_uid', null) == request.auth.uid &&
+             e.status in ['funded', 'in_progress', 'proof_submitted', 'completed', 'disputed'];
+    }
+
+    function isPartyTo(errandId) {
+      let e = errand(errandId);
+      return isSignedIn() &&
+             (e.requester_uid == request.auth.uid || e.get('runner_uid', null) == request.auth.uid);
+    }
+
+    // Users who've finished runner onboarding. Only they may bid.
+    function isRunner() {
+      return isSignedIn() &&
+             'runner' in get(/databases/$(database)/documents/users/$(request.auth.uid)).data.get('roles', []);
+    }
+
+    // ============================================================
+    // ERRANDS
+    // ============================================================
+    match /errands/{errandId} {
+      allow read: if isSignedIn();
+
+      // Created straight into bidding, with only the fields the app is
+      // allowed to set. Server-owned fields (runner, agreed fee, escrow,
+      // timers, counts) must be absent, and the fee split is fixed.
+      allow create: if isSignedIn() &&
+        request.resource.data.requester_uid == request.auth.uid &&
+        request.resource.data.status == 'bidding' &&
+        request.resource.data.type in ['pickup_dropoff', 'queue', 'admin', 'shopping'] &&
+        request.resource.data.title is string &&
+        request.resource.data.title.size() > 0 && request.resource.data.title.size() <= 60 &&
+        request.resource.data.description is string &&
+        request.resource.data.description.size() <= 500 &&
+        request.resource.data.starting_fee is number && request.resource.data.starting_fee > 0 &&
+        request.resource.data.fee_cap is number &&
+        request.resource.data.fee_cap >= request.resource.data.starting_fee &&
+        request.resource.data.requester_fee_rate == 0.05 &&
+        request.resource.data.runner_fee_rate == 0.05 &&
+        (request.resource.data.type != 'shopping' ||
+          (request.resource.data.purchase_budget is number && request.resource.data.purchase_budget > 0)) &&
+        !request.resource.data.keys().hasAny([
+          'runner_uid', 'agreed_fee', 'escrow', 'auto_release_at', 'bid_count',
+          'final_purchase_amount', 'cancelled_by'
+        ]);
+
+      // See THE GOLDEN RULE above.
+      allow update, delete: if false;
+
+      // Exact addresses, shopping list, instructions.
+      match /private/{docId} {
+        allow read: if isRequesterOf(errandId) || isFundedRunnerOf(errandId) || isAdmin();
+        // Written in the same batch as the errand: getAfter() sees the
+        // errand being created and checks the caller owns it.
+        allow create: if docId == 'details' && isSignedIn() &&
+          getAfter(/databases/$(database)/documents/errands/$(errandId)).data.requester_uid
+            == request.auth.uid;
+        allow update, delete: if false;
+      }
+
+      // One bid per runner: the bid's id IS the runner's uid.
+      match /bids/{runnerUid} {
+        // The requester sees every bid; a runner sees only their own.
+        allow read: if isRequesterOf(errandId) ||
+                       (isSignedIn() && request.auth.uid == runnerUid) || isAdmin();
+
+        allow create: if isSignedIn() && request.auth.uid == runnerUid &&
+          isRunner() &&
+          errand(errandId).status == 'bidding' &&
+          errand(errandId).requester_uid != request.auth.uid &&
+          request.resource.data.runner_uid == runnerUid &&
+          request.resource.data.status == 'pending' &&
+          request.resource.data.amount is number &&
+          request.resource.data.amount >= errand(errandId).starting_fee &&
+          request.resource.data.amount <= errand(errandId).fee_cap &&
+          request.resource.data.message is string &&
+          request.resource.data.message.size() <= 200;
+
+        // Edit amount/message while the bid is pending and bidding is open.
+        allow update: if isSignedIn() && request.auth.uid == runnerUid &&
+          resource.data.status == 'pending' &&
+          errand(errandId).status == 'bidding' &&
+          request.resource.data.diff(resource.data).affectedKeys()
+            .hasOnly(['amount', 'message', 'edited_at']) &&
+          request.resource.data.amount >= errand(errandId).starting_fee &&
+          request.resource.data.amount <= errand(errandId).fee_cap;
+
+        // Withdraw a pending bid.
+        allow delete: if isSignedIn() && request.auth.uid == runnerUid &&
+          resource.data.status == 'pending';
+      }
+
+      // Written by the submitProof function only.
+      match /proofs/{proofId} {
+        allow read: if isPartyTo(errandId) || isAdmin();
+        allow write: if false;
+      }
+
+      // The money trail. Written by Cloud Functions only.
+      match /events/{eventId} {
+        allow read: if isPartyTo(errandId) || isAdmin();
+        allow write: if false;
+      }
+    }
+
+    // A runner's own bids across all errands (My Bids).
+    match /{path=**}/bids/{runnerUid} {
+      allow read: if isSignedIn() && resource.data.runner_uid == request.auth.uid;
+    }
+
+    // ============================================================
+    // DISPUTES - created by raiseDispute; settled by an admin.
+    // ============================================================
+    match /disputes/{errandId} {
+      allow read: if isOwner('requester_uid') || isOwner('runner_uid') || isAdmin();
+      allow write: if false;
+    }
+
+    // ============================================================
+    // NOTIFICATIONS - created by Cloud Functions only, so nobody can
+    // send a fake "The Runner" message. The recipient can read, mark as
+    // read (only that field) and delete.
+    // ============================================================
+    match /notifications/{notificationId} {
+      allow read, delete: if isOwner('user_uid');
+      allow update: if isOwner('user_uid') &&
+                       request.resource.data.diff(resource.data).affectedKeys().hasOnly(['read']);
+      allow create: if false;
+    }
+
+    // ============================================================
+    // USERS
+    // ============================================================
+    match /users/{userId} {
+      // PUBLIC profile: name, photo, roles, rating. Phone number and
+      // notification tokens are NOT allowed here - see private/account.
+      allow read: if isSignedIn();
+      // New accounts start as plain users with no rating. The 'runner'
+      // role is granted by the server after the ID check, and 'admin'
+      // never comes from the app - so roles can't be self-assigned.
+      allow create: if isSignedIn() && request.auth.uid == userId &&
+                       request.resource.data.get('roles', ['user']) == ['user'] &&
+                       request.resource.data.get('averageRating', 0) == 0 &&
+                       request.resource.data.get('totalReviews', 0) == 0 &&
+                       !request.resource.data.keys().hasAny(['phoneNumber', 'fcmTokens']);
+      allow update: if isSignedIn() && request.auth.uid == userId &&
+                       unchanged(['roles', 'averageRating', 'totalReviews']) &&
+                       !request.resource.data.diff(resource.data).addedKeys()
+                         .hasAny(['phoneNumber', 'fcmTokens']) &&
+                       !request.resource.data.diff(resource.data).changedKeys()
+                         .hasAny(['phoneNumber', 'fcmTokens']);
+      allow delete: if false;
+
+      // PRIVATE records. Other users get a phone number only through the
+      // getContactPhone function, which checks they share a paid errand.
+      match /private/{docId} {
+        allow read: if isSignedIn() && (request.auth.uid == userId || isAdmin());
+        allow create, update: if isSignedIn() && request.auth.uid == userId && (
+                                 // Phone number (must be the one they signed
+                                 // in with) + notification tokens.
+                                 (docId == 'account' &&
+                                  request.resource.data.keys().hasOnly(['phoneNumber', 'fcmTokens']) &&
+                                  request.resource.data.get('phoneNumber', request.auth.token.phone_number)
+                                    == request.auth.token.phone_number)
+                                 ||
+                                 // Block list: {uids: [...]}. Private, so a
+                                 // blocked person never finds out.
+                                 (docId == 'blocks' &&
+                                  request.resource.data.keys().hasOnly(['uids']) &&
+                                  request.resource.data.uids is list &&
+                                  request.resource.data.uids.size() <= 1000)
+                                 ||
+                                 // App language (for push wording) and
+                                 // whether a runner wants new-errand alerts.
+                                 (docId == 'settings' &&
+                                  request.resource.data.keys().hasOnly(['language', 'errand_alerts']) &&
+                                  request.resource.data.get('language', 'en') in ['en', 'zu'] &&
+                                  request.resource.data.get('errand_alerts', true) is bool));
+        // Removed only by the deleteAccount Cloud Function.
+        allow delete: if false;
+      }
+    }
+
+    // ============================================================
+    // ADMINS - a user can check whether THEY are an admin, nothing
+    // else. Add admins by hand in the Firebase Console.
+    // ============================================================
+    match /admins/{adminUid} {
+      allow read: if isSignedIn() && request.auth.uid == adminUid;
+      allow write: if false;
+    }
+
+    // ============================================================
+    // DEMO ACCOUNTS - a fixed location for Google Play's reviewers
+    // (lib/data/services/demo_account.dart). Console-only.
+    // ============================================================
+    match /demo_accounts/{uid} {
+      allow read: if isSignedIn() && request.auth.uid == uid;
+      allow write: if false;
+    }
+  }
+}
