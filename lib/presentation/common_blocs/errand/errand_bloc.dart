@@ -3,6 +3,7 @@ import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:the_runner/data/models/errand_model.dart';
 import 'package:the_runner/data/repositories/repository.dart';
 import 'package:the_runner/data/services/block_list.dart';
+import 'package:the_runner/data/services/errand_changes.dart';
 import 'package:the_runner/presentation/common_blocs/errand/errand_event.dart';
 import 'package:the_runner/presentation/common_blocs/errand/errand_state.dart';
 
@@ -139,6 +140,7 @@ class ErrandBloc extends Bloc<ErrandEvent, ErrandState> {
     try {
       await action();
       emit(ErrandActionSuccess(messageKey: messageKey));
+      ErrandChanges.notify();
     } catch (e) {
       emit(ErrandError(message: e.toString()));
     }
@@ -149,6 +151,7 @@ class ErrandBloc extends Bloc<ErrandEvent, ErrandState> {
     try {
       final id = await _repository.createErrand(event.request);
       emit(ErrandCreateSuccess(errandId: id));
+      ErrandChanges.notify();
     } catch (e) {
       emit(ErrandError(message: e.toString()));
     }

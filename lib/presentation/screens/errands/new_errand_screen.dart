@@ -9,11 +9,14 @@ import 'package:the_runner/constants/font_constant.dart';
 import 'package:the_runner/core/utils/fees.dart';
 import 'package:the_runner/core/utils/friendly_error.dart';
 import 'package:the_runner/core/utils/labels.dart';
+import 'package:the_runner/core/widgets/address_search_field.dart';
 import 'package:the_runner/core/widgets/loading_overlay.dart';
 import 'package:the_runner/data/models/errand_model.dart';
 import 'package:the_runner/data/models/errand_private_details.dart';
 import 'package:the_runner/data/repositories/repository.dart';
+import 'package:the_runner/data/services/address_search_service.dart';
 import 'package:the_runner/presentation/common_blocs/errand/errand.dart';
+import 'package:the_runner/presentation/common_blocs/location/location.dart';
 import 'package:the_runner/utils/translate.dart';
 
 /// Post an errand. Goes straight into bidding once saved.
@@ -29,8 +32,10 @@ class _NewErrandScreenState extends State<NewErrandScreen> {
   final _title = TextEditingController();
   final _description = TextEditingController();
   final _area = TextEditingController();
-  final _pickup = TextEditingController();
-  final _dropoff = TextEditingController();
+  // Picked from search results only, never free text (see
+  // AddressSearchField), so every address is one a runner can find.
+  AddressSuggestion? _pickup;
+  AddressSuggestion? _dropoff;
   final _instructions = TextEditingController();
   final _shoppingList = TextEditingController();
   final _startingFee = TextEditingController();
@@ -55,8 +60,6 @@ class _NewErrandScreenState extends State<NewErrandScreen> {
       _title,
       _description,
       _area,
-      _pickup,
-      _dropoff,
       _instructions,
       _shoppingList,
       _startingFee,
@@ -99,23 +102,8 @@ class _NewErrandScreenState extends State<NewErrandScreen> {
   Future<void> _submit() async {
     if (!_formKey.currentState!.validate()) return;
 
-    // Exact coordinates for the private details. The public errand only
-    // ever gets a ~1km approximation of these (see the repository).
-    LoadingOverlay.show();
-    final locations = AppRepository.locationRepository;
-    final pickupPos = await locations.getCoordinatesFromAddress(_pickup.text.trim());
-    final dropoffPos = _needsDropoff && _dropoff.text.trim().isNotEmpty
-        ? await locations.getCoordinatesFromAddress(_dropoff.text.trim())
-        : null;
-    LoadingOverlay.hide();
-    if (!mounted) return;
-
-    if (pickupPos == null) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(context.tr('address_not_found'))),
-      );
-      return;
-    }
+    final pickup = _pickup!;
+    final dropoff = _needsDropoff ? _dropoff : null;
 
     final request = CreateErrandRequest(
       type: _type,
@@ -123,12 +111,12 @@ class _NewErrandScreenState extends State<NewErrandScreen> {
       description: _description.text.trim(),
       areaLabel: _area.text.trim(),
       details: ErrandPrivateDetails(
-        pickupAddress: _pickup.text.trim(),
-        pickupLat: pickupPos.latitude,
-        pickupLng: pickupPos.longitude,
-        dropoffAddress: _needsDropoff ? _dropoff.text.trim() : '',
-        dropoffLat: dropoffPos?.latitude,
-        dropoffLng: dropoffPos?.longitude,
+        pickupAddress: pickup.label,
+        pickupLat: pickup.lat,
+        pickupLng: pickup.lng,
+        dropoffAddress: dropoff?.label ?? '',
+        dropoffLat: dropoff?.lat,
+        dropoffLng: dropoff?.lng,
         shoppingList: _isShopping
             ? _shoppingList.text
                 .split('\n')
@@ -148,8 +136,31 @@ class _NewErrandScreenState extends State<NewErrandScreen> {
     context.read<ErrandBloc>().add(CreateErrand(request));
   }
 
+  /// Where the phone is, if already known, so suggestions favour nearby
+  /// places ("Spar" means the Spar down the road, not one in Cape Town).
+  (double, double)? get _here {
+    final state = context.read<LocationBloc>().state;
+    return state is LocationLoaded ? (state.latitude, state.longitude) : null;
+  }
+
+  Future<AddressSuggestion?> _currentAddress() async {
+    final position = await AppRepository.locationRepository.getCurrentPosition();
+    if (position == null) return null;
+    return AddressSearchService.reverse(position.latitude, position.longitude);
+  }
+
+  void _onPickupChosen(AddressSuggestion? place) {
+    _pickup = place;
+    // Fill in the suburb runners see, unless the requester typed one.
+    final suburb = place?.suburb;
+    if (suburb != null && _area.text.trim().isEmpty) {
+      setState(() => _area.text = suburb);
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
+    final here = _here;
     return BlocListener<ErrandBloc, ErrandState>(
       listener: (context, state) {
         if (state is ErrandActionInProgress) {
@@ -217,6 +228,28 @@ class _NewErrandScreenState extends State<NewErrandScreen> {
                 ],
                 _gap(),
                 _Label(context.tr('where')),
+                AddressSearchField(
+                  hint: context.tr(_needsDropoff ? 'pickup_address' : 'errand_address'),
+                  icon: Icons.trip_origin_rounded,
+                  nearLat: here?.$1,
+                  nearLng: here?.$2,
+                  useCurrentLocation: _currentAddress,
+                  onChanged: _onPickupChosen,
+                  validator: (v) => v == null ? context.tr('pick_address_from_list') : null,
+                ),
+                if (_needsDropoff) ...[
+                  SizedBox(height: SizeConfig.defaultPadding * 0.5),
+                  AddressSearchField(
+                    hint: context.tr('dropoff_address'),
+                    icon: Icons.place_outlined,
+                    nearLat: here?.$1,
+                    nearLng: here?.$2,
+                    useCurrentLocation: _currentAddress,
+                    onChanged: (place) => _dropoff = place,
+                    validator: (v) => v == null ? context.tr('pick_address_from_list') : null,
+                  ),
+                ],
+                SizedBox(height: SizeConfig.defaultPadding * 0.5),
                 TextFormField(
                   controller: _area,
                   decoration: InputDecoration(
@@ -225,26 +258,6 @@ class _NewErrandScreenState extends State<NewErrandScreen> {
                   ),
                   validator: _required,
                 ),
-                SizedBox(height: SizeConfig.defaultPadding * 0.5),
-                TextFormField(
-                  controller: _pickup,
-                  decoration: InputDecoration(
-                    hintText: context.tr(_needsDropoff ? 'pickup_address' : 'errand_address'),
-                    prefixIcon: const Icon(Icons.trip_origin_rounded),
-                  ),
-                  validator: _required,
-                ),
-                if (_needsDropoff) ...[
-                  SizedBox(height: SizeConfig.defaultPadding * 0.5),
-                  TextFormField(
-                    controller: _dropoff,
-                    decoration: InputDecoration(
-                      hintText: context.tr('dropoff_address'),
-                      prefixIcon: const Icon(Icons.place_outlined),
-                    ),
-                    validator: _required,
-                  ),
-                ],
                 SizedBox(height: SizeConfig.defaultPadding * 0.5),
                 TextFormField(
                   controller: _instructions,

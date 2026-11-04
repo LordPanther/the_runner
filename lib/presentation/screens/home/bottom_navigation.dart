@@ -6,6 +6,7 @@ import 'package:the_runner/constants/color_constant.dart';
 import 'package:the_runner/constants/font_constant.dart';
 import 'package:the_runner/configs/size_config.dart';
 import 'package:the_runner/presentation/common_blocs/errand/errand.dart';
+import 'package:the_runner/data/services/errand_changes.dart';
 import 'package:the_runner/presentation/common_blocs/notification/notification.dart';
 import 'package:the_runner/presentation/screens/errands/my_errands_screen.dart';
 import 'package:the_runner/presentation/screens/home/home_tab.dart';
@@ -63,7 +64,12 @@ class _BottomNavigationState extends State<BottomNavigation> {
 
         return BottomNavigationBar(
           currentIndex: _currentIndex,
-          onTap: (index) => setState(() => _currentIndex = index),
+          onTap: (index) {
+            // Opening My Errands refreshes it, catching anything the
+            // other person changed (a new bid, payment, proof).
+            if (index == 1 && _currentIndex != 1) ErrandChanges.notify();
+            setState(() => _currentIndex = index);
+          },
           type: BottomNavigationBarType.fixed,
           backgroundColor: ColorConst.surfaceColor,
           selectedItemColor: ColorConst.primaryColor,

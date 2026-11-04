@@ -10,6 +10,7 @@ import 'package:the_runner/constants/font_constant.dart';
 import 'package:the_runner/core/utils/friendly_error.dart';
 import 'package:the_runner/core/widgets/errand_card.dart';
 import 'package:the_runner/data/models/errand_model.dart';
+import 'package:the_runner/data/services/errand_changes.dart';
 import 'package:the_runner/presentation/common_blocs/errand/errand.dart';
 import 'package:the_runner/utils/translate.dart';
 
@@ -72,9 +73,19 @@ class _ErrandListState extends State<_ErrandList> with AutomaticKeepAliveClientM
   void initState() {
     super.initState();
     _load();
+    // This list stays mounted in the bottom nav, so it reloads whenever
+    // an errand changes anywhere in the app.
+    ErrandChanges.listenable.addListener(_load);
+  }
+
+  @override
+  void dispose() {
+    ErrandChanges.listenable.removeListener(_load);
+    super.dispose();
   }
 
   void _load() {
+    if (!mounted) return;
     final uid = FirebaseAuth.instance.currentUser?.uid;
     if (uid == null) return;
     context.read<ErrandBloc>().add(widget.posted ? LoadMyPostedErrands(uid) : LoadMyRuns(uid));
@@ -93,14 +104,19 @@ class _ErrandListState extends State<_ErrandList> with AutomaticKeepAliveClientM
         }
         final errands = state is ErrandsListLoaded ? state.errands : <ErrandModel>[];
         if (errands.isEmpty) {
-          return Center(
-            child: Padding(
+          // Still pull-to-refresh: a scrollable list, not a plain Center.
+          return RefreshIndicator(
+            onRefresh: () async => _load(),
+            child: ListView(
               padding: EdgeInsets.all(SizeConfig.defaultPadding * 2),
-              child: Text(
-                context.tr(widget.posted ? 'no_posted_errands' : 'no_runs_yet'),
-                textAlign: TextAlign.center,
-                style: FontConst.REGULAR_SECONDARY_14,
-              ),
+              children: [
+                SizedBox(height: SizeConfig.defaultPadding * 4),
+                Text(
+                  context.tr(widget.posted ? 'no_posted_errands' : 'no_runs_yet'),
+                  textAlign: TextAlign.center,
+                  style: FontConst.REGULAR_SECONDARY_14,
+                ),
+              ],
             ),
           );
         }
