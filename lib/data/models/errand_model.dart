@@ -166,6 +166,9 @@ class ErrandModel extends Equatable {
   final DateTime? autoReleaseAt;
   final EscrowInfo escrow;
 
+  /// Who cancelled it: a uid, or "system" when bidding closed with no bids.
+  final String? cancelledBy;
+
   final DateTime createdAt;
   final DateTime updatedAt;
 
@@ -194,6 +197,7 @@ class ErrandModel extends Equatable {
     this.bidCount,
     this.autoReleaseAt,
     this.escrow = const EscrowInfo(),
+    this.cancelledBy,
     required this.createdAt,
     required this.updatedAt,
   });
@@ -212,6 +216,15 @@ class ErrandModel extends Equatable {
   /// What the runner receives for [fee] (defaults to the agreed fee).
   double runnerPayoutFor(double fee) =>
       Fees.runnerPayout(fee, rate: runnerFeeRate);
+
+  /// Bidding closed and nobody bid, so the server took it down.
+  bool get isExpiredUnbid =>
+      status == ErrandStatus.cancelled && cancelledBy == 'system';
+
+  /// The requester can still change everything and (re)open it for bids:
+  /// it expired with no bids, or it's open and nobody has bid yet.
+  bool get canEditAndRelist =>
+      isExpiredUnbid || (status == ErrandStatus.bidding && (bidCount ?? 0) == 0);
 
   bool isRequester(String? uid) => uid != null && uid == requesterUid;
   bool isRunner(String? uid) => uid != null && uid == runnerUid;
@@ -277,6 +290,7 @@ class ErrandModel extends Equatable {
       bidCount: (data['bid_count'] as num?)?.toInt(),
       autoReleaseAt: _parseTimestampNullable(data['auto_release_at']),
       escrow: EscrowInfo.fromMap(data['escrow'] as Map<String, dynamic>?),
+      cancelledBy: data['cancelled_by'] as String?,
       createdAt: createdAt,
       updatedAt: _parseTimestamp(data['updated_at'], fallback: createdAt),
     );
@@ -336,6 +350,7 @@ class ErrandModel extends Equatable {
         bidCount,
         autoReleaseAt,
         escrow,
+        cancelledBy,
         createdAt,
         updatedAt,
       ];

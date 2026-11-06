@@ -17,6 +17,7 @@ import {
 } from "./common.js";
 import {escrow} from "./escrow.js";
 import {breakdown} from "./fees.js";
+import {approximate, geohashEncode} from "./geo.js";
 
 /**
  * Every errand status change from `accepted` onward lives here. Each
@@ -320,5 +321,114 @@ export const cancelErrand = onCall(async (request) => {
       await errandRef(errandId).update({"escrow.refund_failed": true});
     }
   }
+  return {ok: true};
+});
+
+// ── Editing and relisting ──────────────────────────────────────
+
+const num = (value: unknown, name: string): number => {
+  if (typeof value !== "number" || !Number.isFinite(value)) {
+    throw new HttpsError("invalid-argument", `Missing ${name}.`);
+  }
+  return value;
+};
+
+const text = (value: unknown, max: number): string =>
+  typeof value === "string" ? value.trim().slice(0, max) : "";
+
+/**
+ * The requester edits an errand nobody has bid on and puts it back up
+ * for bids: one that expired with no bids (cancelled by the schedule),
+ * or one still open with no bids yet. Same errand, same id: no
+ * duplicates in anyone's lists.
+ *
+ * Done here rather than in the app because errand updates from clients
+ * are blocked outright (firestore.rules), and the location fields must
+ * be recomputed exactly as on create.
+ */
+export const relistErrand = onCall(async (request) => {
+  const uid = requireUid(request.auth);
+  const d = request.data ?? {};
+  const errandId = requireString(d.errandId, "errand");
+
+  const title = text(d.title, 60);
+  if (!title) throw new HttpsError("invalid-argument", "Missing title.");
+  const startingFee = num(d.startingFee, "starting fee");
+  const feeCap = num(d.feeCap, "cap");
+  if (startingFee <= 0) throw new HttpsError("invalid-argument", "Missing starting fee.");
+  if (feeCap < startingFee) {
+    throw new HttpsError("invalid-argument", "The cap must be at least the starting fee.");
+  }
+  const biddingClosesAt = num(d.biddingClosesAtMs, "bidding window");
+  if (biddingClosesAt <= Date.now()) {
+    throw new HttpsError("invalid-argument", "Pick a bidding window.");
+  }
+  const deadline = typeof d.deadlineMs === "number" ? d.deadlineMs : null;
+
+  const details = d.details ?? {};
+  const pickupLat = num(details.pickupLat, "pickup");
+  const pickupLng = num(details.pickupLng, "pickup");
+  const pickupAddress = text(details.pickupAddress, 300);
+  if (!pickupAddress) throw new HttpsError("invalid-argument", "Missing pickup.");
+
+  const ref = errandRef(errandId);
+  await db.runTransaction(async (tx) => {
+    const snap = await tx.get(ref);
+    if (!snap.exists) throw new HttpsError("not-found", "Errand not found");
+    const errand = snap.data() as Errand;
+    onlyRequester(uid)(errand);
+
+    const expiredUnbid = errand.status === Status.cancelled && errand.cancelled_by === "system";
+    const openUnbid = errand.status === Status.bidding && (errand.bid_count ?? 0) === 0;
+    if (!expiredUnbid && !openUnbid) {
+      throw new HttpsError("failed-precondition", "This errand has changed. Please refresh.");
+    }
+
+    const type = errand.type;
+    const budget = type === "shopping" ? num(d.purchaseBudget, "purchase budget") : null;
+    if (budget !== null && budget <= 0) {
+      throw new HttpsError("invalid-argument", "Missing purchase budget.");
+    }
+
+    const lat = approximate(pickupLat);
+    const lng = approximate(pickupLng);
+    tx.update(ref, {
+      title,
+      description: text(d.description, 500),
+      area_label: text(d.areaLabel, 80),
+      lat,
+      lng,
+      geohash: geohashEncode(lat, lng),
+      deadline: deadline ? admin.firestore.Timestamp.fromMillis(deadline) : null,
+      bidding_closes_at: admin.firestore.Timestamp.fromMillis(biddingClosesAt),
+      starting_fee: startingFee,
+      fee_cap: feeCap,
+      instant_accept: d.instantAccept === true,
+      ...(budget !== null ? {purchase_budget: budget} : {}),
+      status: Status.bidding,
+      cancelled_by: admin.firestore.FieldValue.delete(),
+      relisted_count: admin.firestore.FieldValue.increment(1),
+      updated_at: serverTime(),
+    });
+    tx.set(ref.collection("private").doc("details"), {
+      pickup_address: pickupAddress,
+      pickup_lat: pickupLat,
+      pickup_lng: pickupLng,
+      dropoff_address: text(details.dropoffAddress, 300),
+      dropoff_lat: typeof details.dropoffLat === "number" ? details.dropoffLat : null,
+      dropoff_lng: typeof details.dropoffLng === "number" ? details.dropoffLng : null,
+      shopping_list: Array.isArray(details.shoppingList) ?
+        details.shoppingList.filter((i: unknown) => typeof i === "string").slice(0, 100) :
+        [],
+      instructions: text(details.instructions, 500),
+    });
+    tx.create(ref.collection("events").doc(), {
+      from: errand.status,
+      to: Status.bidding,
+      actor_uid: uid,
+      note: expiredUnbid ? "relisted after expiring with no bids" : "edited before any bids",
+      at: serverTime(),
+    });
+  });
   return {ok: true};
 });

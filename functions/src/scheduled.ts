@@ -58,10 +58,12 @@ export const errandHousekeeping = onSchedule(
       if ((doc.get("bid_count") ?? 0) > 0) continue; // requester can still pick
       await doc.ref.update({status: Status.cancelled, cancelled_by: "system", updated_at: nowTs});
       await notify(
-        `expired_${doc.id}`,
+        // Per listing, so a relisted errand that expires again is announced again.
+        `expired_${doc.id}_${doc.get("relisted_count") ?? 0}`,
         doc.get("requester_uid"),
         "No bids this time",
-        `Nobody bid on "${doc.get("title")}" before bidding closed. Try posting again with a higher cap.`,
+        `Nobody bid on "${doc.get("title")}" before bidding closed. ` +
+          "Open it to edit and relist, e.g. with a higher cap.",
         "errand_cancelled",
         {errand_id: doc.id},
       );

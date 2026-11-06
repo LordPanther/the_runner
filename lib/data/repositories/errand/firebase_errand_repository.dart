@@ -6,6 +6,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:cloud_functions/cloud_functions.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_storage/firebase_storage.dart';
+import 'package:flutter/foundation.dart';
 import 'package:the_runner/data/models/bid_model.dart';
 import 'package:the_runner/data/models/errand_model.dart';
 import 'package:the_runner/data/models/errand_private_details.dart';
@@ -95,6 +96,26 @@ class FirebaseErrandRepository implements ErrandRepository {
   }
 
   @override
+  Future<void> relistErrand(String errandId, CreateErrandRequest request) async {
+    if (request.feeCap < request.startingFee) {
+      throw Exception('The cap must be at least the starting fee');
+    }
+    await _call('relistErrand', {
+      'errandId': errandId,
+      'title': request.title,
+      'description': request.description,
+      'areaLabel': request.areaLabel,
+      'startingFee': request.startingFee,
+      'feeCap': request.feeCap,
+      'instantAccept': request.instantAccept,
+      'purchaseBudget': ?request.purchaseBudget,
+      'deadlineMs': ?request.deadline?.millisecondsSinceEpoch,
+      'biddingClosesAtMs': request.biddingClosesAt.millisecondsSinceEpoch,
+      'details': request.details.toMap(),
+    });
+  }
+
+  @override
   Future<ErrandModel> getErrandById(String errandId) async {
     try {
       final doc = await _errands.doc(errandId).get();
@@ -169,18 +190,28 @@ class FirebaseErrandRepository implements ErrandRepository {
 
       final uid = _firebaseAuth.currentUser?.uid;
       final now = DateTime.now();
+      final all = docs.map((doc) => ErrandModel.fromMap(doc.data(), doc.id)).toList();
 
-      var errands = docs
-          .map((doc) => ErrandModel.fromMap(doc.data(), doc.id))
-          .where((e) => type == null || e.type == type)
-          // Your own errands live in My Errands, not the feed.
-          .where((e) => e.requesterUid != uid)
-          // Bidding closed but the server hasn't caught up yet.
-          .where((e) => e.biddingClosesAt.isAfter(now))
+      final ofType = all.where((e) => type == null || e.type == type).toList();
+      // Your own errands live in My Errands, not the feed.
+      final notMine = ofType.where((e) => e.requesterUid != uid).toList();
+      // Bidding closed but the server hasn't caught up yet.
+      final open = notMine.where((e) => e.biddingClosesAt.isAfter(now)).toList();
+      var errands = open
           .where((e) =>
               GeohashService.distanceMeters(lat, lng, e.lat, e.lng) <=
               radiusKm * 1000)
           .toList();
+
+      // Why an errand didn't show: how many survive each filter.
+      debugPrint('[ErrandFeed] at ($lat, $lng) radius ${radiusKm}km: '
+          'fetched ${all.length} -> type ${ofType.length} -> not mine ${notMine.length} '
+          '-> still open ${open.length} -> in range ${errands.length}');
+      for (final e in all) {
+        final km = GeohashService.distanceMeters(lat, lng, e.lat, e.lng) / 1000;
+        debugPrint('[ErrandFeed]   "${e.title}" ${km.toStringAsFixed(1)}km '
+            'mine=${e.requesterUid == uid} closes=${e.biddingClosesAt}');
+      }
 
       // Closest deadline first: an errand due in an hour matters more
       // than one due next week.

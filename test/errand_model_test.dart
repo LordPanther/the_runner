@@ -52,4 +52,19 @@ void main() {
     expect(errand.requesterTotal, 584);
     expect(errand.runnerPayoutFor(80), 76);
   });
+
+  test('expired with no bids can be edited and relisted', () {
+    final expired = ErrandModel.fromMap(raw({'status': 'cancelled', 'cancelled_by': 'system'}), 'e5');
+    expect(expired.isExpiredUnbid, isTrue);
+    expect(expired.canEditAndRelist, isTrue);
+
+    final cancelledByUser = ErrandModel.fromMap(raw({'status': 'cancelled', 'cancelled_by': 'req1'}), 'e6');
+    expect(cancelledByUser.canEditAndRelist, isFalse);
+
+    final openNoBids = ErrandModel.fromMap(raw({'bid_count': 0}), 'e7');
+    expect(openNoBids.canEditAndRelist, isTrue);
+
+    final openWithBids = ErrandModel.fromMap(raw({'bid_count': 2}), 'e8');
+    expect(openWithBids.canEditAndRelist, isFalse);
+  });
 }

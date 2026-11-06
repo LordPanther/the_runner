@@ -14,6 +14,7 @@ export {
   approveCompletion,
   cancelErrand,
   raiseDispute,
+  relistErrand,
   startErrand,
   startPayment,
   submitProof,

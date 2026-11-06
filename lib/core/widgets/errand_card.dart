@@ -84,7 +84,7 @@ class ErrandCard extends StatelessWidget {
                   ),
                   if (showStatus) ...[
                     const SizedBox(height: 4),
-                    ErrandStatusChip(status: errand.status),
+                    ErrandStatusChip(status: errand.status, expired: errand.isExpiredUnbid),
                   ],
                 ],
               ),
@@ -131,11 +131,15 @@ class _PriceColumn extends StatelessWidget {
 class ErrandStatusChip extends StatelessWidget {
   final ErrandStatus status;
 
-  const ErrandStatusChip({super.key, required this.status});
+  /// Cancelled because bidding closed with no bids: shown as "Expired,
+  /// no bids" in gold (it can be relisted), not a red "Cancelled".
+  final bool expired;
+
+  const ErrandStatusChip({super.key, required this.status, this.expired = false});
 
   @override
   Widget build(BuildContext context) {
-    final color = errandStatusColor(status);
+    final color = expired ? ColorConst.warningColor : errandStatusColor(status);
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
       decoration: BoxDecoration(
@@ -143,7 +147,7 @@ class ErrandStatusChip extends StatelessWidget {
         borderRadius: BorderRadius.circular(20),
       ),
       child: Text(
-        errandStatusLabel(context, status),
+        expired ? context.tr('errand_status_expired') : errandStatusLabel(context, status),
         style: FontConst.MEDIUM_SECONDARY_12.copyWith(color: color),
       ),
     );

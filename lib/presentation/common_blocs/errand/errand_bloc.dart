@@ -36,6 +36,7 @@ class ErrandBloc extends Bloc<ErrandEvent, ErrandState> {
     // ignored. Stops the "tapped Post 5 times, got 5 errands" bug Town
     // Post hit with jobs.
     on<CreateErrand>(_onCreateErrand, transformer: droppable());
+    on<RelistErrand>(_onRelist, transformer: droppable());
     on<PlaceBid>(_onPlaceBid, transformer: droppable());
     on<UpdateBid>(_onUpdateBid, transformer: droppable());
     on<WithdrawBid>(_onWithdrawBid, transformer: droppable());
@@ -156,6 +157,9 @@ class ErrandBloc extends Bloc<ErrandEvent, ErrandState> {
       emit(ErrandError(message: e.toString()));
     }
   }
+
+  Future<void> _onRelist(RelistErrand event, Emitter<ErrandState> emit) =>
+      _act(emit, 'errand_relisted', () => _repository.relistErrand(event.errandId, event.request));
 
   Future<void> _onPlaceBid(PlaceBid event, Emitter<ErrandState> emit) =>
       _act(emit, 'bid_placed', () => _repository.placeBid(

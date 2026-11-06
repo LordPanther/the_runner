@@ -4,6 +4,7 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:url_launcher/url_launcher.dart';
+import 'package:the_runner/configs/router.dart';
 import 'package:the_runner/configs/size_config.dart';
 import 'package:the_runner/constants/color_constant.dart';
 import 'package:the_runner/constants/font_constant.dart';
@@ -20,6 +21,7 @@ import 'package:the_runner/data/repositories/repository.dart';
 import 'package:the_runner/presentation/common_blocs/auth/auth.dart';
 import 'package:the_runner/presentation/common_blocs/errand/errand.dart';
 import 'package:the_runner/presentation/screens/errands/bid_sheet.dart';
+import 'package:the_runner/presentation/screens/errands/new_errand_screen.dart';
 import 'package:the_runner/presentation/screens/errands/proof_sheet.dart';
 import 'package:the_runner/utils/translate.dart';
 
@@ -176,9 +178,28 @@ class _ErrandDetailScreenState extends State<ErrandDetailScreen> {
     final uid = _uid;
 
     if (errand.isRequester(uid)) {
+      // Nobody bid in time: change anything and put it back up.
+      if (errand.isExpiredUnbid) {
+        return [
+          ElevatedButton.icon(
+            onPressed: () => _editAndRelist(errand),
+            icon: const Icon(Icons.refresh_rounded),
+            label: Text(context.tr('edit_and_relist')),
+          ),
+        ];
+      }
       switch (errand.status) {
         case ErrandStatus.bidding:
-          return [_cancelButton(errand)];
+          return [
+            _cancelButton(errand),
+            // Still open with no bids: fix the price or details freely.
+            if (errand.canEditAndRelist)
+              OutlinedButton.icon(
+                onPressed: () => _editAndRelist(errand),
+                icon: const Icon(Icons.edit_outlined),
+                label: Text(context.tr('edit')),
+              ),
+          ];
         case ErrandStatus.accepted:
           return [
             _cancelButton(errand),
@@ -298,6 +319,23 @@ class _ErrandDetailScreenState extends State<ErrandDetailScreen> {
         onYes: () => context.read<ErrandBloc>().add(CancelErrand(errandId: errand.id)),
       ),
       child: Text(context.tr('cancel_errand')),
+    );
+  }
+
+  /// Opens the errand form pre-filled. The relist itself runs on the
+  /// server; this screen updates through the errand stream afterwards.
+  Future<void> _editAndRelist(ErrandModel errand) async {
+    final details = await (_details ?? _repository.getPrivateDetails(errand.id));
+    if (!mounted) return;
+    if (details == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(context.tr('error_generic'))),
+      );
+      return;
+    }
+    await Navigator.of(context).pushNamed(
+      AppRouter.newErrand,
+      arguments: ErrandEditArgs(errand: errand, details: details),
     );
   }
 
@@ -512,7 +550,7 @@ class _Header extends StatelessWidget {
         const SizedBox(height: 6),
         Row(
           children: [
-            ErrandStatusChip(status: errand.status),
+            ErrandStatusChip(status: errand.status, expired: errand.isExpiredUnbid),
             const SizedBox(width: 8),
             if (errand.areaLabel.isNotEmpty)
               Flexible(

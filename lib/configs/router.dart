@@ -77,7 +77,8 @@ class AppRouter {
         return MaterialPageRoute(
           builder: (_) => BlocProvider(
             create: (_) => ErrandBloc(),
-            child: const NewErrandScreen(),
+            // Arguments: ErrandEditArgs to edit and relist, none to post new.
+            child: NewErrandScreen(edit: settings.arguments as ErrandEditArgs?),
           ),
           settings: settings,
         );

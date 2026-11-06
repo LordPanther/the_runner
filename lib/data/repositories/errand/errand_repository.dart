@@ -75,6 +75,11 @@ abstract class ErrandRepository {
   /// Realtime updates, for the errand detail screen.
   Stream<ErrandModel> streamErrand(String errandId);
 
+  /// Edit an errand nobody has bid on and open it for bids again (it
+  /// expired with no bids, or it's still open with none yet). Same
+  /// errand id; the type can't change. Runs as a Cloud Function.
+  Future<void> relistErrand(String errandId, CreateErrandRequest request);
+
   /// Errands this user posted, newest first.
   Future<List<ErrandModel>> getErrandsByRequester(String requesterUid);
 

@@ -75,6 +75,16 @@ class CreateErrand extends ErrandEvent {
   List<Object?> get props => [request];
 }
 
+class RelistErrand extends ErrandEvent {
+  final String errandId;
+  final CreateErrandRequest request;
+
+  const RelistErrand({required this.errandId, required this.request});
+
+  @override
+  List<Object?> get props => [errandId, request];
+}
+
 class AcceptBid extends ErrandEvent {
   final String errandId;
   final String runnerUid;

@@ -12,10 +12,13 @@ import 'package:the_runner/core/widgets/errand_card.dart';
 import 'package:the_runner/core/widgets/runner_map.dart';
 import 'package:the_runner/data/local/search_radius_preference.dart';
 import 'package:the_runner/data/models/errand_model.dart';
+import 'package:the_runner/data/services/errand_changes.dart';
 import 'package:the_runner/data/services/geohash_service.dart';
 import 'package:the_runner/data/services/location_accuracy_check.dart';
 import 'package:the_runner/presentation/common_blocs/errand/errand.dart';
 import 'package:the_runner/presentation/common_blocs/location/location.dart';
+import 'package:the_runner/presentation/common_blocs/settings/app_settings_bloc.dart';
+import 'package:the_runner/presentation/common_blocs/settings/app_settings_state.dart';
 import 'package:the_runner/utils/translate.dart';
 
 /// The runner's feed: errands still open for bids near you, closest
@@ -37,10 +40,22 @@ class _HomeTabState extends State<HomeTab> {
   void initState() {
     super.initState();
     context.read<LocationBloc>().add(RequestPermission());
+    // Bids placed or withdrawn elsewhere change what belongs in the feed.
+    ErrandChanges.listenable.addListener(_load);
+  }
+
+  @override
+  void dispose() {
+    ErrandChanges.listenable.removeListener(_load);
+    super.dispose();
   }
 
   void _load() {
-    if (_lat == null || _lng == null) return;
+    if (!mounted || _lat == null || _lng == null) {
+      debugPrint('[ErrandFeed] not loading yet: no location');
+      return;
+    }
+    debugPrint('[ErrandFeed] loading around ($_lat, $_lng)');
     context.read<ErrandBloc>().add(LoadOpenErrandsNearby(
           lat: _lat!,
           lng: _lng!,
@@ -59,14 +74,27 @@ class _HomeTabState extends State<HomeTab> {
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: ColorConst.backgroundColor,
-      body: BlocListener<LocationBloc, LocationState>(
-        listener: (context, state) {
-          if (state is LocationLoaded) {
-            _lat = state.latitude;
-            _lng = state.longitude;
-            _load();
-          }
-        },
+      body: MultiBlocListener(
+        listeners: [
+          BlocListener<LocationBloc, LocationState>(
+            listener: (context, state) {
+              if (state is LocationLoaded) {
+                // The same position arrives twice (coordinates, then
+                // again with the street address): only reload if it moved.
+                final moved = state.latitude != _lat || state.longitude != _lng;
+                _lat = state.latitude;
+                _lng = state.longitude;
+                if (moved) _load();
+              }
+            },
+          ),
+          // This tab stays mounted in the bottom nav, so a radius change
+          // in Settings has to reload it explicitly.
+          BlocListener<AppSettingsBloc, AppSettingsState>(
+            listenWhen: (before, after) => before.searchRadiusKm != after.searchRadiusKm,
+            listener: (context, state) => _load(),
+          ),
+        ],
         child: SafeArea(
           child: Column(
             children: [
@@ -175,7 +203,9 @@ class _HomeTabState extends State<HomeTab> {
           // sign-up rather than a dead end.
           return _Message(
             icon: Icons.directions_run_rounded,
-            text: context.tr('no_errands_nearby'),
+            text: context.tr('no_errands_nearby', {
+              'km': SearchRadiusPreference.get().toStringAsFixed(0),
+            }),
           );
         }
         return RefreshIndicator(
@@ -260,8 +290,9 @@ class _LocationBar extends StatelessWidget {
     return BlocBuilder<LocationBloc, LocationState>(
       builder: (context, state) {
         String label = context.tr('finding_location');
-        if (state is LocationLoaded && state.address != null) {
-          label = state.address!;
+        if (state is LocationLoaded) {
+          // Address can lag behind (or fail): the feed still works.
+          label = state.address ?? context.tr('current_location');
         } else if (state is PermissionDenied || state is PermissionDeniedForever) {
           label = context.tr('location_unavailable_tap');
         }

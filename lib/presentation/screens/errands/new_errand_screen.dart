@@ -19,9 +19,21 @@ import 'package:the_runner/presentation/common_blocs/errand/errand.dart';
 import 'package:the_runner/presentation/common_blocs/location/location.dart';
 import 'package:the_runner/utils/translate.dart';
 
-/// Post an errand. Goes straight into bidding once saved.
+/// What the form needs to edit an existing errand instead of posting a
+/// new one: the errand and its private details (addresses, list).
+class ErrandEditArgs {
+  final ErrandModel errand;
+  final ErrandPrivateDetails details;
+
+  const ErrandEditArgs({required this.errand, required this.details});
+}
+
+/// Post an errand, or (given [edit]) change one nobody has bid on and
+/// relist it. Either way it goes straight into bidding once saved.
 class NewErrandScreen extends StatefulWidget {
-  const NewErrandScreen({super.key});
+  final ErrandEditArgs? edit;
+
+  const NewErrandScreen({super.key, this.edit});
 
   @override
   State<NewErrandScreen> createState() => _NewErrandScreenState();
@@ -53,6 +65,36 @@ class _NewErrandScreenState extends State<NewErrandScreen> {
     Duration(hours: 6),
     Duration(hours: 24),
   ];
+
+  bool get _editing => widget.edit != null;
+
+  @override
+  void initState() {
+    super.initState();
+    final edit = widget.edit;
+    if (edit == null) return;
+    final e = edit.errand;
+    final d = edit.details;
+    String money(double v) => v == v.roundToDouble() ? v.toStringAsFixed(0) : v.toStringAsFixed(2);
+
+    _type = e.type;
+    _title.text = e.title;
+    _description.text = e.description;
+    _area.text = e.areaLabel;
+    _instructions.text = d.instructions;
+    _shoppingList.text = d.shoppingList.join('\n');
+    _startingFee.text = money(e.startingFee);
+    _feeCap.text = money(e.feeCap);
+    if (e.purchaseBudget != null) _budget.text = money(e.purchaseBudget!);
+    _instantAccept = e.instantAccept;
+    // An old deadline that's already passed would only get rejected.
+    final deadline = e.deadline;
+    _deadline = deadline != null && deadline.isAfter(DateTime.now()) ? deadline : null;
+    _pickup = AddressSuggestion(label: d.pickupAddress, lat: d.pickupLat, lng: d.pickupLng);
+    if (d.hasDropoff && d.dropoffLat != null && d.dropoffLng != null) {
+      _dropoff = AddressSuggestion(label: d.dropoffAddress, lat: d.dropoffLat!, lng: d.dropoffLng!);
+    }
+  }
 
   @override
   void dispose() {
@@ -133,7 +175,10 @@ class _NewErrandScreenState extends State<NewErrandScreen> {
       instantAccept: _instantAccept,
       purchaseBudget: _isShopping ? _money(_budget) : null,
     );
-    context.read<ErrandBloc>().add(CreateErrand(request));
+    final edit = widget.edit;
+    context.read<ErrandBloc>().add(edit == null
+        ? CreateErrand(request)
+        : RelistErrand(errandId: edit.errand.id, request: request));
   }
 
   /// Where the phone is, if already known, so suggestions favour nearby
@@ -173,6 +218,11 @@ class _NewErrandScreenState extends State<NewErrandScreen> {
             SnackBar(content: Text(context.tr('errand_posted'))),
           );
           Navigator.of(context).pop(state.errandId);
+        } else if (state is ErrandActionSuccess && state.messageKey == 'errand_relisted') {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text(context.tr('errand_relisted'))),
+          );
+          Navigator.of(context).pop(true);
         } else if (state is ErrandError) {
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(content: Text(context.errorText(state.message))),
@@ -181,7 +231,7 @@ class _NewErrandScreenState extends State<NewErrandScreen> {
       },
       child: Scaffold(
         backgroundColor: ColorConst.backgroundColor,
-        appBar: AppBar(title: Text(context.tr('post_an_errand'))),
+        appBar: AppBar(title: Text(context.tr(_editing ? 'edit_and_relist' : 'post_an_errand'))),
         body: SafeArea(
           child: Form(
             key: _formKey,
@@ -198,7 +248,8 @@ class _NewErrandScreenState extends State<NewErrandScreen> {
                         avatar: Icon(errandTypeIcon(type), size: 18),
                         label: Text(errandTypeLabel(context, type)),
                         selected: _type == type,
-                        onSelected: (_) => setState(() => _type = type),
+                        // The type can't change once posted.
+                        onSelected: _editing ? null : (_) => setState(() => _type = type),
                       ),
                   ],
                 ),
@@ -234,6 +285,7 @@ class _NewErrandScreenState extends State<NewErrandScreen> {
                   nearLat: here?.$1,
                   nearLng: here?.$2,
                   useCurrentLocation: _currentAddress,
+                  initialValue: _pickup,
                   onChanged: _onPickupChosen,
                   validator: (v) => v == null ? context.tr('pick_address_from_list') : null,
                 ),
@@ -245,6 +297,7 @@ class _NewErrandScreenState extends State<NewErrandScreen> {
                     nearLat: here?.$1,
                     nearLng: here?.$2,
                     useCurrentLocation: _currentAddress,
+                    initialValue: _dropoff,
                     onChanged: (place) => _dropoff = place,
                     validator: (v) => v == null ? context.tr('pick_address_from_list') : null,
                   ),
@@ -357,7 +410,7 @@ class _NewErrandScreenState extends State<NewErrandScreen> {
                 _gap(),
                 ElevatedButton(
                   onPressed: _submit,
-                  child: Text(context.tr('post_errand')),
+                  child: Text(context.tr(_editing ? 'relist_errand' : 'post_errand')),
                 ),
               ],
             ),

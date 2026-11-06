@@ -1,4 +1,5 @@
 // Example: Location Bloc
+import 'package:flutter/foundation.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:bloc_concurrency/bloc_concurrency.dart';
 import 'package:geolocator/geolocator.dart';
@@ -102,16 +103,30 @@ class LocationBloc extends Bloc<LocationEvent, LocationState> {
     );
     
     if (position != null) {
-      final address = await _locationRepository.getAddressFromCoordinates(
-        latitude: position.latitude,
-        longitude: position.longitude,
-      );
-      
+      // Coordinates FIRST: everything that searches nearby only needs
+      // these. The street-address lookup can be slow or hang on some
+      // phones, and waiting for it left the errand feed never loading.
       emit(LocationLoaded(
         latitude: position.latitude,
         longitude: position.longitude,
-        address: address,
       ));
+
+      // Then the address for the location bar, if it arrives in time.
+      try {
+        final address = await _locationRepository
+            .getAddressFromCoordinates(
+              latitude: position.latitude,
+              longitude: position.longitude,
+            )
+            .timeout(const Duration(seconds: 8));
+        emit(LocationLoaded(
+          latitude: position.latitude,
+          longitude: position.longitude,
+          address: address,
+        ));
+      } catch (e) {
+        debugPrint('Address lookup failed or timed out: $e');
+      }
     } else {
       emit(const LocationError(message: 'location_failed'));
     }

@@ -27,6 +27,8 @@ class AddressSearchField extends FormField<AddressSuggestion> {
     /// Shows a "Use my current location" button; called when tapped and
     /// should return the address at the person's position (or null).
     Future<AddressSuggestion?> Function()? useCurrentLocation,
+    /// Pre-picked address, e.g. when editing an errand.
+    super.initialValue,
     super.validator,
   }) : super(
           builder: (field) => _AddressSearchBody(
@@ -75,6 +77,14 @@ class _AddressSearchBodyState extends State<_AddressSearchBody> {
   /// Bumped on every new search, so a slow older response can't
   /// overwrite the results for what's typed now.
   int _searchId = 0;
+
+  @override
+  void initState() {
+    super.initState();
+    // Editing: show the already-picked address with its green tick.
+    final initial = widget.field.value;
+    if (initial != null) _controller.text = initial.label;
+  }
 
   @override
   void dispose() {
